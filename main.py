@@ -3,6 +3,11 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
 from reportlab.lib import colors
 import pandas as pd
+import sqlite3
+from datetime import datetime
+
+
+sheet_names = ['1-6','7E','7S','7A','7K','7L','7M','8E','8S','8A','8L','8M']
 
 # Custom dimensions and design settings
 CARD_WIDTH = 3.37 * inch
@@ -15,6 +20,55 @@ SPACING_Y = 0.25 * inch
 CARDS_PER_ROW = 2
 CARDS_PER_COLUMN = 4
 
+# Connect to SQLite database
+def connect_db():
+    conn = sqlite3.connect('students.db')
+    return conn
+
+def create_students_table():
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS students (
+            ADMNO TEXT PRIMARY KEY,
+            NAME TEXT,
+            GRADE TEXT,
+            STREAM TEXT,
+            PROCESSED INTEGER DEFAULT 0
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def store_new_students(new_df):
+    conn = connect_db()
+    cursor = conn.cursor()
+
+    for _, row in new_df.iterrows():
+        cursor.execute('''
+            INSERT OR IGNORE INTO students (ADMNO, NAME, GRADE, STREAM, PROCESSED)
+            VALUES (?, ?, ?, ?, 0)
+        ''', (row['ADMNO'], row['NAME'], row['GRADE'], row['STREAM']))
+    conn.commit()
+    conn.close()
+
+def get_unprocessed_students():
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM students WHERE PROCESSED = 0')
+    new_students = cursor.fetchall()
+    conn.close()
+
+    # Convert result to DataFrame
+    columns = ['ADMNO', 'NAME', 'GRADE', 'STREAM', 'PROCESSED']
+    return pd.DataFrame(new_students, columns=columns)
+
+def mark_students_as_processed(admnos):
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.executemany('UPDATE students SET PROCESSED = 1 WHERE ADMNO = ?', [(admno,) for admno in admnos])
+    conn.commit()
+    conn.close()
 
 def draw_card(c, x, y, name, admno, grade, stream, validity):
     # Background and Border
@@ -92,9 +146,21 @@ def draw_card(c, x, y, name, admno, grade, stream, validity):
 #     c.setFont("Helvetica-Bold", font_size)
 #     c.drawString(x, y, text)
 
+def create_dataframe(input_file):
+    # Initialize an empty list to store dataframes
+    df_list = []
+    # Add a column to each dataframe for the sheet name
+    for sheet in sheet_names:
+        df = pd.read_excel(input_file, sheet_name=sheet, index_col=[0])
+        df['Sheet'] = sheet  # Add the sheet name as a new column
+        # Convert 'ADMNO' column to string to remove decimals
+        df['ADMNO'] = df['ADMNO'].astype(str).str.replace(r'\.0$', '', regex=True)
+        df_list.append(df)
 
-def generate_pdf(input_file, output_file, validity):
-    df = pd.read_excel(input_file)
+    # Concatenate the dataframes
+    return pd.concat(df_list, ignore_index=True)
+
+def generate_pdf(data, output_file, validity: str):
 
     c = canvas.Canvas(output_file, pagesize=letter)
     PAGE_WIDTH, PAGE_HEIGHT = letter
@@ -104,7 +170,7 @@ def generate_pdf(input_file, output_file, validity):
 
     card_count = 0
 
-    for index, row in df.iterrows():
+    for index, row in data.iterrows():
         draw_card(
             c,
             x,
@@ -131,7 +197,35 @@ def generate_pdf(input_file, output_file, validity):
     c.save()
 
 
+def updated_cards(new_data_file, output_file):
+    # Read new data from the Excel sheet
+    new_df = create_dataframe(new_data_file)
+
+    # Store new students in the database
+    store_new_students(new_df)
+
+    # Get unprocessed students from the database
+    unprocessed_students = get_unprocessed_students()
+
+    # If there are unprocessed students, generate ID cards
+    if not unprocessed_students.empty:
+        print(f"Found {len(unprocessed_students)} new students to process.")
+        generate_pdf(unprocessed_students, output_file, validity="25/10/2024")
+
+        # Mark the processed students as processed
+        mark_students_as_processed(unprocessed_students['ADMNO'].tolist())
+    else:
+        print("No new students to process.")
+
 # Usage
-input_file = "TERM3 MEAL CARDS 1-6(updates).xlsx"
-output_file = "id_cards_custom_design.pdf"
-generate_pdf(input_file, output_file, "25/10/2024")
+create_students_table()
+input_file = 'data.xlsx'
+output_file = f"meal_cards({datetime.now().strftime('%d/%m')}).pdf"
+updated_cards(input_file, output_file)
+
+# # Usage
+# # input_file = "TERM3 MEAL CARDS 1-6(updates).xlsx"
+# input_file = 'data.xlsx'
+# output_file = f"id_cards({datetime.now().strftime('%m-%d')}).pdf"
+# # generate_pdf(input_type='file', data=input_file, output_file=output_file, validity="25/10/2024")
+# updated_cards(input_file, output_file)
