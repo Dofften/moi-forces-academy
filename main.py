@@ -5,6 +5,11 @@ from reportlab.lib import colors
 import pandas as pd
 import sqlite3
 from datetime import datetime
+import uuid
+
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import os
 
 
 sheet_names = ['1-6','7E','7S','7A','7K','7L','7M','8E','8S','8A','8L','8M']
@@ -20,12 +25,11 @@ SPACING_Y = 0.25 * inch
 CARDS_PER_ROW = 2
 CARDS_PER_COLUMN = 4
 
-# Connect to SQLite database
 def connect_db():
     conn = sqlite3.connect('students.db')
     return conn
 
-def create_students_table():
+def intialize_db():
     conn = connect_db()
     cursor = conn.cursor()
     cursor.execute('''
@@ -129,23 +133,6 @@ def draw_card(c, x, y, name, admno, grade, stream, validity):
     c.drawCentredString(x + CARD_WIDTH / 2, text_y - 0.9 * inch, f"VALIDITY: {validity}")
 
 
-# Function to adjust font size for long text
-# def draw_text_with_dynamic_font_size(
-#     c, text, x, y, max_width, max_font_size=10, min_font_size=6
-# ):
-#     font_size = max_font_size
-#     c.setFont("Helvetica-Bold", font_size)
-
-#     # Check the width of the text at the current font size
-#     while (
-#         font_size >= min_font_size
-#         and c.stringWidth(text, "Helvetica-Bold", font_size) > max_width
-#     ):
-#         font_size -= 1  # Reduce font size if the text is too wide
-
-#     c.setFont("Helvetica-Bold", font_size)
-#     c.drawString(x, y, text)
-
 def create_dataframe(input_file):
     # Initialize an empty list to store dataframes
     df_list = []
@@ -155,6 +142,10 @@ def create_dataframe(input_file):
         df['Sheet'] = sheet  # Add the sheet name as a new column
         # Convert 'ADMNO' column to string to remove decimals
         df['ADMNO'] = df['ADMNO'].astype(str).str.replace(r'\.0$', '', regex=True)
+
+        # Replace missing or empty ADMNO with generated unique ID
+        df['ADMNO'] = df['ADMNO'].apply(lambda x: x if pd.notna(x) and x.strip() != '' else f'AUTO-{uuid.uuid4().hex[:6]}')
+        
         df_list.append(df)
 
     # Concatenate the dataframes
@@ -197,7 +188,7 @@ def generate_pdf(data, output_file, validity: str):
     c.save()
 
 
-def updated_cards(new_data_file, output_file):
+def updated_cards(new_data_file, output_file, validity):
     # Read new data from the Excel sheet
     new_df = create_dataframe(new_data_file)
 
@@ -209,23 +200,70 @@ def updated_cards(new_data_file, output_file):
 
     # If there are unprocessed students, generate ID cards
     if not unprocessed_students.empty:
-        print(f"Found {len(unprocessed_students)} new students to process.")
-        generate_pdf(unprocessed_students, output_file, validity="25/10/2024")
+        # print(f"Found {len(unprocessed_students)} new students to process.")
+        messagebox.showinfo("Message", f"Found {len(unprocessed_students)} new students to process.")
+        generate_pdf(unprocessed_students, output_file, validity=validity)
 
         # Mark the processed students as processed
         mark_students_as_processed(unprocessed_students['ADMNO'].tolist())
     else:
-        print("No new students to process.")
+        messagebox.showinfo("Message", "No new students to process.")
+        # print("No new students to process.")
+
+# GUI Functions
+def select_file():
+    file_path = filedialog.askopenfilename(title="Select Excel File", filetypes=(("Excel files", "*.xlsx"),))
+    if file_path:
+        entry_file_path.delete(0, tk.END)
+        entry_file_path.insert(0, file_path)
+
+def on_generate():
+    input_file = entry_file_path.get()
+    validity = validity_period.get()
+    output_file = f"meal_cards({datetime.now().strftime('%Y%m%dT%H%M%S')}).pdf"
+    if not input_file:
+        messagebox.showerror("Error", "Please select an Excel file.")
+        return
+    
+
+    updated_cards(input_file, output_file, validity)
+
+# GUI Setup
+root = tk.Tk()
+root.title("MFA Meal Cards Generator")
+
+# File Selection
+frame_file = tk.Frame(root)
+frame_file.pack(pady=10)
+
+label_file_path = tk.Label(frame_file, text="Excel File: ")
+label_file_path.grid(row=0, column=0)
+
+entry_file_path = tk.Entry(frame_file, width=40)
+entry_file_path.grid(row=0, column=1)
+
+label_validity_period = tk.Label(frame_file, text="Validity: ")
+label_validity_period.grid(row=2, column=0)
+
+validity_period = tk.Entry(frame_file, width=40)
+validity_period.grid(row=2, column=1)
+
+button_browse = tk.Button(frame_file, text="Browse", command=select_file)
+button_browse.grid(row=0, column=2)
+
+# Generate Button
+button_generate = tk.Button(root, text="Generate ID Cards", command=on_generate, width=20)
+button_generate.pack(pady=20)
+
+intialize_db()
+
+# Run the application
+root.mainloop()
 
 # Usage
-create_students_table()
-input_file = 'data.xlsx'
-output_file = f"meal_cards({datetime.now().strftime('%d/%m')}).pdf"
-updated_cards(input_file, output_file)
+# intialize_db()
+# input_file = input("Please input filename: ")
+# validity = input("Please input validity: ")
+# output_file = f"meal_cards({datetime.now().strftime('%Y%m%dT%H%M%S')}).pdf"
+# updated_cards(input_file, output_file, validity)
 
-# # Usage
-# # input_file = "TERM3 MEAL CARDS 1-6(updates).xlsx"
-# input_file = 'data.xlsx'
-# output_file = f"id_cards({datetime.now().strftime('%m-%d')}).pdf"
-# # generate_pdf(input_type='file', data=input_file, output_file=output_file, validity="25/10/2024")
-# updated_cards(input_file, output_file)
