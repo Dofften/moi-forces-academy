@@ -9,10 +9,9 @@ import uuid
 
 import tkinter as tk
 from tkinter import filedialog, messagebox
-import os
 
 
-sheet_names = ['1-6','7E','7S','7A','7K','7L','7M','8E','8S','8A','8L','8M']
+sheet_names = ["1-6", "7E", "7S", "7A", "7K", "7L", "7M", "8E", "8S", "8A", "8L", "8M"]
 
 # Custom dimensions and design settings
 CARD_WIDTH = 3.37 * inch
@@ -25,54 +24,69 @@ SPACING_Y = 0.25 * inch
 CARDS_PER_ROW = 2
 CARDS_PER_COLUMN = 4
 
+
 def connect_db():
-    conn = sqlite3.connect('students.db')
+    conn = sqlite3.connect("students.db")
     return conn
+
 
 def intialize_db():
     conn = connect_db()
     cursor = conn.cursor()
-    cursor.execute('''
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS students (
-            ADMNO TEXT PRIMARY KEY,
+            ADMNO TEXT,
             NAME TEXT,
             GRADE TEXT,
             STREAM TEXT,
-            PROCESSED INTEGER DEFAULT 0
+            PROCESSED INTEGER DEFAULT 0,
+            PRIMARY KEY (ADMNO, NAME)
         )
-    ''')
+    """
+    )
     conn.commit()
     conn.close()
+
 
 def store_new_students(new_df):
     conn = connect_db()
     cursor = conn.cursor()
 
     for _, row in new_df.iterrows():
-        cursor.execute('''
+        cursor.execute(
+            """
             INSERT OR IGNORE INTO students (ADMNO, NAME, GRADE, STREAM, PROCESSED)
             VALUES (?, ?, ?, ?, 0)
-        ''', (row['ADMNO'], row['NAME'], row['GRADE'], row['STREAM']))
+        """,
+            (row["ADMNO"], row["NAME"], row["GRADE"], row["STREAM"]),
+        )
     conn.commit()
     conn.close()
+
 
 def get_unprocessed_students():
     conn = connect_db()
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM students WHERE PROCESSED = 0')
+    cursor.execute("SELECT * FROM students WHERE PROCESSED = 0")
     new_students = cursor.fetchall()
     conn.close()
 
     # Convert result to DataFrame
-    columns = ['ADMNO', 'NAME', 'GRADE', 'STREAM', 'PROCESSED']
+    columns = ["ADMNO", "NAME", "GRADE", "STREAM", "PROCESSED"]
     return pd.DataFrame(new_students, columns=columns)
+
 
 def mark_students_as_processed(admnos):
     conn = connect_db()
     cursor = conn.cursor()
-    cursor.executemany('UPDATE students SET PROCESSED = 1 WHERE ADMNO = ?', [(admno,) for admno in admnos])
+    cursor.executemany(
+        "UPDATE students SET PROCESSED = 1 WHERE ADMNO = ?",
+        [(admno,) for admno in admnos],
+    )
     conn.commit()
     conn.close()
+
 
 def draw_card(c, x, y, name, admno, grade, stream, validity):
     # Background and Border
@@ -126,11 +140,15 @@ def draw_card(c, x, y, name, admno, grade, stream, validity):
 
     # Grade and stream
     c.setFont("Helvetica-Bold", 12)
-    c.drawCentredString(x + CARD_WIDTH / 2, text_y - 0.6 * inch, f"GRADE: {grade} {stream}")
+    c.drawCentredString(
+        x + CARD_WIDTH / 2, text_y - 0.6 * inch, f"GRADE: {grade} {stream}"
+    )
 
     # Validity
     c.setFont("Helvetica-Bold", 12)
-    c.drawCentredString(x + CARD_WIDTH / 2, text_y - 0.9 * inch, f"VALIDITY: {validity}")
+    c.drawCentredString(
+        x + CARD_WIDTH / 2, text_y - 0.9 * inch, f"VALIDITY: {validity}"
+    )
 
 
 def create_dataframe(input_file):
@@ -139,17 +157,22 @@ def create_dataframe(input_file):
     # Add a column to each dataframe for the sheet name
     for sheet in sheet_names:
         df = pd.read_excel(input_file, sheet_name=sheet, index_col=[0])
-        df['Sheet'] = sheet  # Add the sheet name as a new column
+        df["Sheet"] = sheet  # Add the sheet name as a new column
         # Convert 'ADMNO' column to string to remove decimals
-        df['ADMNO'] = df['ADMNO'].astype(str).str.replace(r'\.0$', '', regex=True)
+        df["ADMNO"] = df["ADMNO"].astype(str).str.replace(r"\.0$", "", regex=True)
 
         # Replace missing or empty ADMNO with generated unique ID
-        df['ADMNO'] = df['ADMNO'].apply(lambda x: x if pd.notna(x) and x.strip() != '' else f'AUTO-{uuid.uuid4().hex[:6]}')
-        
+        # df["ADMNO"] = df["ADMNO"].apply(
+        #     lambda x: (
+        #         x if pd.notna(x) and x.strip() != "" else f"AUTO-{uuid.uuid4().hex[:6]}"
+        #     )
+        # )
+
         df_list.append(df)
 
     # Concatenate the dataframes
     return pd.concat(df_list, ignore_index=True)
+
 
 def generate_pdf(data, output_file, validity: str):
 
@@ -201,21 +224,28 @@ def updated_cards(new_data_file, output_file, validity):
     # If there are unprocessed students, generate ID cards
     if not unprocessed_students.empty:
         # print(f"Found {len(unprocessed_students)} new students to process.")
-        messagebox.showinfo("Message", f"Found {len(unprocessed_students)} new students to process.")
+        messagebox.showinfo(
+            title="Message",
+            message=f"Found {len(unprocessed_students)} new students to process.\n Meal cards saved at {output_file}",
+        )
         generate_pdf(unprocessed_students, output_file, validity=validity)
 
         # Mark the processed students as processed
-        mark_students_as_processed(unprocessed_students['ADMNO'].tolist())
+        mark_students_as_processed(unprocessed_students["ADMNO"].tolist())
     else:
         messagebox.showinfo("Message", "No new students to process.")
         # print("No new students to process.")
 
+
 # GUI Functions
 def select_file():
-    file_path = filedialog.askopenfilename(title="Select Excel File", filetypes=(("Excel files", "*.xlsx"),))
+    file_path = filedialog.askopenfilename(
+        title="Select Excel File", filetypes=(("Excel files", "*.xlsx"),)
+    )
     if file_path:
         entry_file_path.delete(0, tk.END)
         entry_file_path.insert(0, file_path)
+
 
 def on_generate():
     input_file = entry_file_path.get()
@@ -224,12 +254,13 @@ def on_generate():
     if not input_file:
         messagebox.showerror("Error", "Please select an Excel file.")
         return
-    
 
     updated_cards(input_file, output_file, validity)
 
+
 # GUI Setup
 root = tk.Tk()
+root.iconbitmap("logo.ico")
 root.title("MFA Meal Cards Generator")
 
 # File Selection
@@ -237,28 +268,33 @@ frame_file = tk.Frame(root)
 frame_file.pack(pady=10)
 
 label_file_path = tk.Label(frame_file, text="Excel File: ")
-label_file_path.grid(row=0, column=0)
+label_file_path.grid(row=0, column=0, padx=10, pady=10)
 
 entry_file_path = tk.Entry(frame_file, width=40)
-entry_file_path.grid(row=0, column=1)
+entry_file_path.grid(row=0, column=1, padx=10, pady=10)
 
 label_validity_period = tk.Label(frame_file, text="Validity: ")
-label_validity_period.grid(row=2, column=0)
+label_validity_period.grid(row=2, column=0, padx=10, pady=10)
 
 validity_period = tk.Entry(frame_file, width=40)
-validity_period.grid(row=2, column=1)
+validity_period.grid(row=2, column=1, padx=10, pady=10)
 
 button_browse = tk.Button(frame_file, text="Browse", command=select_file)
-button_browse.grid(row=0, column=2)
+button_browse.grid(row=0, column=2, padx=10, pady=10)
 
 # Generate Button
-button_generate = tk.Button(root, text="Generate ID Cards", command=on_generate, width=20)
+button_generate = tk.Button(
+    root, text="Generate ID Cards", command=on_generate, width=20
+)
 button_generate.pack(pady=20)
 
-intialize_db()
 
-# Run the application
-root.mainloop()
+def main():
+    intialize_db()
+
+    # Run the application
+    root.mainloop()
+
 
 # Usage
 # intialize_db()
@@ -267,3 +303,5 @@ root.mainloop()
 # output_file = f"meal_cards({datetime.now().strftime('%Y%m%dT%H%M%S')}).pdf"
 # updated_cards(input_file, output_file, validity)
 
+if __name__ == "__main__":
+    main()
