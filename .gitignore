@@ -3,3 +3,6 @@
 *.pdf
 *.pdf
 *.xlsx
+/build
+/dist
+main.spec
