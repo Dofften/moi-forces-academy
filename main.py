@@ -419,9 +419,12 @@ def view_all_records():
     view_window.title("All Student Records")
     view_window.geometry("800x500")
 
+    # === Table Frame ===
+    table_frame = tk.Frame(view_window)
+    table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
     columns = ("ADMNO", "NAME", "GRADE", "STREAM", "PROCESSED")
-    tree = ttk.Treeview(view_window, columns=columns, show="headings")
-    tree.pack(fill=tk.BOTH, expand=True)
+    tree = ttk.Treeview(table_frame, columns=columns, show="headings")
 
     for col in columns:
         tree.heading(col, text=col, command=lambda _col=col: sort_column(tree, _col, False))
@@ -433,6 +436,16 @@ def view_all_records():
     scrollbar = ttk.Scrollbar(view_window, orient="vertical", command=tree.yview)
     tree.configure(yscroll=scrollbar.set)
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    # Attach Treeview and Scrollbar using grid (for better alignment)
+    tree.grid(row=0, column=0, sticky="nsew")
+    scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=scrollbar.set)
+    scrollbar.grid(row=0, column=1, sticky="ns")
+
+    # Allow treeview to expand
+    table_frame.grid_rowconfigure(0, weight=1)
+    table_frame.grid_columnconfigure(0, weight=1)
 
     # Action Buttons
     btn_frame = tk.Frame(view_window)
