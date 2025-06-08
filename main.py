@@ -5,13 +5,12 @@ from reportlab.lib import colors
 import pandas as pd
 import sqlite3
 from datetime import datetime
-import uuid
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 
 
-sheet_names = ["1-6", "7E", "7S", "7A", "7K", "7L", "7M", "8E", "8S", "8A", "8L", "8M"]
+sheet_names = ["1-9"]
 
 # Custom dimensions and design settings
 CARD_WIDTH = 3.37 * inch
@@ -26,11 +25,13 @@ CARDS_PER_COLUMN = 4
 
 
 def connect_db():
+    """Connect to the SQLite database and return the connection object."""
     conn = sqlite3.connect("students.db")
     return conn
 
 
 def intialize_db():
+    """Initialize the database and create the students table if it doesn't exist."""
     conn = connect_db()
     cursor = conn.cursor()
     cursor.execute(
@@ -50,6 +51,7 @@ def intialize_db():
 
 
 def store_new_students(new_df):
+    """Store new students from the DataFrame into the database."""
     conn = connect_db()
     cursor = conn.cursor()
 
@@ -66,6 +68,7 @@ def store_new_students(new_df):
 
 
 def get_unprocessed_students():
+    """Retrieve unprocessed students from the database."""
     conn = connect_db()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM students WHERE PROCESSED = 0")
@@ -78,6 +81,7 @@ def get_unprocessed_students():
 
 
 def mark_students_as_processed(admnos):
+    """Mark students as processed in the database."""
     conn = connect_db()
     cursor = conn.cursor()
     cursor.executemany(
@@ -87,8 +91,33 @@ def mark_students_as_processed(admnos):
     conn.commit()
     conn.close()
 
+def nuke_database(db_path="students.db"):
+    """Delete all data from the database."""
+    confirm = messagebox.askyesno("Confirm Delete", "Are you absolutely sure you want to delete ALL data?")
+    if not confirm:
+        return
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Get all tables
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = cursor.fetchall()
+
+        # Drop all tables
+        for table_name in tables:
+            cursor.execute(f"DROP TABLE IF EXISTS {table_name[0]}")
+
+        conn.commit()
+        conn.close()
+        intialize_db()
+        messagebox.showinfo("Database Nuked", "All tables have been deleted. The database is now empty.")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to nuke database: {e}")
 
 def draw_card(c, x, y, name, admno, grade, stream, validity):
+    """Draw a single student card on the canvas."""
     # Background and Border
     # c.setFillColorRGB(0.9, 0.9, 0.9)  # Light gray background
     c.rect(x, y, CARD_WIDTH, CARD_HEIGHT, fill=0)
@@ -152,6 +181,7 @@ def draw_card(c, x, y, name, admno, grade, stream, validity):
 
 
 def create_dataframe(input_file):
+    """Create a DataFrame from the specified Excel file."""
     # Initialize an empty list to store dataframes
     df_list = []
     # Add a column to each dataframe for the sheet name
@@ -175,6 +205,7 @@ def create_dataframe(input_file):
 
 
 def generate_pdf(data, output_file, validity: str):
+    """Generate a PDF with student Meal cards from the provided DataFrame."""
 
     c = canvas.Canvas(output_file, pagesize=letter)
     PAGE_WIDTH, PAGE_HEIGHT = letter
@@ -212,6 +243,7 @@ def generate_pdf(data, output_file, validity: str):
 
 
 def updated_cards(new_data_file, output_file, validity):
+    """Update the database with new students and generate Meal cards."""
     # Read new data from the Excel sheet
     new_df = create_dataframe(new_data_file)
 
@@ -224,14 +256,13 @@ def updated_cards(new_data_file, output_file, validity):
     # If there are unprocessed students, generate ID cards
     if not unprocessed_students.empty:
         # print(f"Found {len(unprocessed_students)} new students to process.")
+        generate_pdf(unprocessed_students, output_file, validity=validity)
+        # Mark the processed students as processed
+        mark_students_as_processed(unprocessed_students["ADMNO"].tolist())
         messagebox.showinfo(
             title="Message",
             message=f"Found {len(unprocessed_students)} new students to process.\n Meal cards saved at {output_file}",
         )
-        generate_pdf(unprocessed_students, output_file, validity=validity)
-
-        # Mark the processed students as processed
-        mark_students_as_processed(unprocessed_students["ADMNO"].tolist())
     else:
         messagebox.showinfo("Message", "No new students to process.")
         # print("No new students to process.")
@@ -239,6 +270,7 @@ def updated_cards(new_data_file, output_file, validity):
 
 # GUI Functions
 def select_file():
+    """Open a file dialog to select an Excel file."""
     file_path = filedialog.askopenfilename(
         title="Select Excel File", filetypes=(("Excel files", "*.xlsx"),)
     )
@@ -248,6 +280,7 @@ def select_file():
 
 
 def on_generate():
+    """Handle the "Generate Bulk Meal Cards" button click."""
     input_file = entry_file_path.get()
     validity = validity_period.get()
     output_file = f"meal_cards({datetime.now().strftime('%Y%m%dT%H%M%S')}).pdf"
@@ -257,10 +290,162 @@ def on_generate():
 
     updated_cards(input_file, output_file, validity)
 
+def sort_column(tree, col, reverse):
+    """Sort the treeview by the specified column."""
+    data = [(tree.set(k, col), k) for k in tree.get_children("")]
+    try:
+        data.sort(key=lambda t: int(t[0]) if t[0].isdigit() else t[0], reverse=reverse)
+    except ValueError:
+        data.sort(reverse=reverse)
+
+    for index, (val, k) in enumerate(data):
+        tree.move(k, "", index)
+
+    tree.heading(col, command=lambda: sort_column(tree, col, not reverse))
+
+def view_all_records():
+    """View all student records in a new window."""
+    def delete_selected():
+        selected = tree.selection()
+        if not selected:
+            messagebox.showwarning("No selection", "Please select a record to delete.")
+            return
+
+        values = tree.item(selected[0])["values"]
+        admno, name = values[0], values[1]
+
+        confirm = messagebox.askyesno(
+            "Confirm Delete", f"Delete record for {name} ({admno})?"
+        )
+        if confirm:
+            conn = connect_db()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM students WHERE ADMNO = ? AND NAME = ?", (admno, name))
+            conn.commit()
+            conn.close()
+            tree.delete(selected[0])
+            messagebox.showinfo("Deleted", f"Record for {name} deleted.")
+
+    def edit_selected():
+        selected = tree.selection()
+        if not selected:
+            messagebox.showwarning("No selection", "Please select a record to edit.")
+            return
+
+        values = tree.item(selected[0])["values"]
+        admno, name, grade, stream, processed = values
+
+        def save_changes():
+            new_name = entry_name.get()
+            new_grade = entry_grade.get()
+            new_stream = entry_stream.get()
+
+            conn = connect_db()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE students
+                SET NAME = ?, GRADE = ?, STREAM = ?
+                WHERE ADMNO = ?
+                """,
+                (new_name, new_grade, new_stream, admno),
+            )
+            conn.commit()
+            conn.close()
+
+            tree.item(selected[0], values=(admno, new_name, new_grade, new_stream, processed))
+            edit_window.destroy()
+            messagebox.showinfo("Updated", f"Record for {admno} updated.")
+
+        edit_window = tk.Toplevel(view_window)
+        edit_window.title(f"Edit Record: {admno}")
+        edit_window.geometry("300x200")
+
+        tk.Label(edit_window, text="Name:").pack()
+        entry_name = tk.Entry(edit_window)
+        entry_name.insert(0, name)
+        entry_name.pack()
+
+        tk.Label(edit_window, text="Grade:").pack()
+        entry_grade = tk.Entry(edit_window)
+        entry_grade.insert(0, grade)
+        entry_grade.pack()
+
+        tk.Label(edit_window, text="Stream:").pack()
+        entry_stream = tk.Entry(edit_window)
+        entry_stream.insert(0, stream)
+        entry_stream.pack()
+
+        tk.Button(edit_window, text="Save Changes", command=save_changes).pack(pady=10)
+    
+    def generate_mealcard_selected():
+        """Generate meal card for the selected student."""
+        selected = tree.selection()
+        if not selected:
+            messagebox.showwarning("No selection", "Please select a record to generate meal card.")
+            return
+
+        values = tree.item(selected[0])["values"]
+        admno, name, grade, stream, processed = values
+        validity = ""
+
+        generate_window = tk.Toplevel(view_window)
+        generate_window.title(f"{name} - {admno}")
+        generate_window.geometry("300x200")
+
+        tk.Label(generate_window, text="Validity:").pack()
+        entry_name = tk.Entry(generate_window)
+        entry_name.insert(0, validity)
+        entry_name.pack()
+        def generate_pdf_and_save():
+            validity = entry_name.get()
+            if not validity:
+                messagebox.showerror("Error", "Please enter a validity period.")
+                return
+            output_file = f"{name}_{admno}_{datetime.now().strftime('%Y%m%dT%H%M%S')}.pdf"
+            data = pd.DataFrame({"ADMNO": [admno], "NAME": [name], "GRADE": [grade], "STREAM": [stream]})
+            generate_pdf(data, output_file, validity=validity)
+            messagebox.showinfo("Meal Card Generated", f"Meal card saved as {output_file}.")
+        tk.Button(generate_window, text="Generate Meal Card", command=generate_pdf_and_save).pack(pady=10)
+
+    # -- Main Window --
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT ADMNO, NAME, GRADE, STREAM, PROCESSED FROM students")
+    records = cursor.fetchall()
+    conn.close()
+
+    view_window = tk.Toplevel(root)
+    view_window.title("All Student Records")
+    view_window.geometry("800x500")
+
+    columns = ("ADMNO", "NAME", "GRADE", "STREAM", "PROCESSED")
+    tree = ttk.Treeview(view_window, columns=columns, show="headings")
+    tree.pack(fill=tk.BOTH, expand=True)
+
+    for col in columns:
+        tree.heading(col, text=col, command=lambda _col=col: sort_column(tree, _col, False))
+        tree.column(col, width=120, anchor="center")
+
+    for row in records:
+        tree.insert("", tk.END, values=row)
+
+    scrollbar = ttk.Scrollbar(view_window, orient="vertical", command=tree.yview)
+    tree.configure(yscroll=scrollbar.set)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    # Action Buttons
+    btn_frame = tk.Frame(view_window)
+    btn_frame.pack(pady=10)
+
+    tk.Button(btn_frame, text="Edit Selected", command=edit_selected).pack(side=tk.LEFT, padx=10)
+    tk.Button(btn_frame, text="Delete Selected", command=delete_selected).pack(side=tk.LEFT, padx=10)
+    tk.Button(btn_frame, text="Generate Meal Card", command=generate_mealcard_selected).pack(side=tk.LEFT, padx=10)
+    tk.Button(btn_frame, text="Delete All Data", fg="white", bg="red", command=nuke_database).pack(side=tk.LEFT, padx=10)
 
 # GUI Setup
 root = tk.Tk()
-root.iconbitmap("logo.ico")
+
 root.title("MFA Meal Cards Generator")
 
 # File Selection
@@ -284,12 +469,18 @@ button_browse.grid(row=0, column=2, padx=10, pady=10)
 
 # Generate Button
 button_generate = tk.Button(
-    root, text="Generate ID Cards", command=on_generate, width=20
+    root, text="Generate Bulk Meal Cards", command=on_generate, width=20
 )
 button_generate.pack(pady=20)
 
+button_view_records = tk.Button(
+    root, text="View All Records", command=view_all_records, width=20
+)
+button_view_records.pack(pady=10)
+
 
 def main():
+    """Main function to run the application."""
     intialize_db()
 
     # Run the application
