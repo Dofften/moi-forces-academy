@@ -5,4 +5,4 @@
 *.xlsx
 /build
 /dist
-main.spec
+*.spec
