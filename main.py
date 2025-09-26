@@ -21,7 +21,11 @@ logo_data = base64.b64decode(mfa_logo_base64)
 
 logo_image = ImageReader(io.BytesIO(logo_data))
 
-sheet_names = ["1-9"]
+def get_excel_sheets(file_path):
+    """Return a list of sheet names from the Excel file."""
+    xls = pd.ExcelFile(file_path)
+    return xls.sheet_names
+
 
 # Custom dimensions and design settings
 CARD_WIDTH = 3.37 * inch
@@ -191,28 +195,12 @@ def draw_card(c, x, y, name, admno, grade, stream, validity):
     )
 
 
-def create_dataframe(input_file):
-    """Create a DataFrame from the specified Excel file."""
-    # Initialize an empty list to store dataframes
-    df_list = []
-    # Add a column to each dataframe for the sheet name
-    for sheet in sheet_names:
-        df = pd.read_excel(input_file, sheet_name=sheet, index_col=[0])
-        df["Sheet"] = sheet  # Add the sheet name as a new column
-        # Convert 'ADMNO' column to string to remove decimals
-        df["ADMNO"] = df["ADMNO"].astype(str).str.replace(r"\.0$", "", regex=True)
-
-        # Replace missing or empty ADMNO with generated unique ID
-        # df["ADMNO"] = df["ADMNO"].apply(
-        #     lambda x: (
-        #         x if pd.notna(x) and x.strip() != "" else f"AUTO-{uuid.uuid4().hex[:6]}"
-        #     )
-        # )
-
-        df_list.append(df)
-
-    # Concatenate the dataframes
-    return pd.concat(df_list, ignore_index=True)
+def create_dataframe(input_file, selected_sheet):
+    """Create a DataFrame from the selected sheet in the Excel file."""
+    df = pd.read_excel(input_file, sheet_name=selected_sheet, index_col=[0])
+    df["Sheet"] = selected_sheet
+    df["ADMNO"] = df["ADMNO"].astype(str).str.replace(r"\.0$", "", regex=True)
+    return df
 
 
 def generate_pdf(data, output_file, validity: str):
@@ -253,22 +241,14 @@ def generate_pdf(data, output_file, validity: str):
     c.save()
 
 
-def updated_cards(new_data_file, output_file, validity):
+def updated_cards(new_data_file, output_file, validity, selected_sheet):
     """Update the database with new students and generate Meal cards."""
-    # Read new data from the Excel sheet
-    new_df = create_dataframe(new_data_file)
-
-    # Store new students in the database
+    new_df = create_dataframe(new_data_file, selected_sheet)
     store_new_students(new_df)
-
-    # Get unprocessed students from the database
     unprocessed_students = get_unprocessed_students()
 
-    # If there are unprocessed students, generate ID cards
     if not unprocessed_students.empty:
-        # print(f"Found {len(unprocessed_students)} new students to process.")
         generate_pdf(unprocessed_students, output_file, validity=validity)
-        # Mark the processed students as processed
         mark_students_as_processed(unprocessed_students["ADMNO"].tolist())
         messagebox.showinfo(
             title="Message",
@@ -276,12 +256,12 @@ def updated_cards(new_data_file, output_file, validity):
         )
     else:
         messagebox.showinfo("Message", "No new students to process.")
-        # print("No new students to process.")
 
 
 # GUI Functions
 def select_file():
-    """Open a file dialog to select an Excel file."""
+    """Open a file dialog to select an Excel file and populate sheet names."""
+    global combo_sheets
     file_path = filedialog.askopenfilename(
         title="Select Excel File", filetypes=(("Excel files", "*.xlsx"),)
     )
@@ -289,17 +269,37 @@ def select_file():
         entry_file_path.delete(0, tk.END)
         entry_file_path.insert(0, file_path)
 
+        # Load available sheets
+        sheets = get_excel_sheets(file_path)
+
+        # If dropdown already exists, destroy it
+        if combo_sheets:
+            combo_sheets.destroy()
+
+        # Create new dropdown for sheet selection
+        combo_sheets = ttk.Combobox(frame_file, textvariable=sheet_var, values=sheets, state="readonly")
+        combo_sheets.grid(row=1, column=1, padx=10, pady=10)
+        combo_sheets.current(0)  # default to first sheet
+
+        tk.Label(frame_file, text="Select Sheet:").grid(row=1, column=0, padx=10, pady=10)
+
 
 def on_generate():
-    """Handle the "Generate Bulk Meal Cards" button click."""
+    """Handle the 'Generate Bulk Meal Cards' button click."""
     input_file = entry_file_path.get()
     validity = validity_period.get()
+    selected_sheet = sheet_var.get()
     output_file = f"meal_cards({datetime.now().strftime('%Y%m%dT%H%M%S')}).pdf"
+
     if not input_file:
         messagebox.showerror("Error", "Please select an Excel file.")
         return
+    if not selected_sheet:
+        messagebox.showerror("Error", "Please select a sheet.")
+        return
 
-    updated_cards(input_file, output_file, validity)
+    # Run update with selected sheet
+    updated_cards(input_file, output_file, validity, selected_sheet)
 
 def sort_column(tree, col, reverse):
     """Sort the treeview by the specified column."""
@@ -473,6 +473,9 @@ root = tk.Tk()
 root.iconphoto(True, tk.PhotoImage(data=logo_data))
 
 root.title("MFA Meal Cards Generator")
+
+sheet_var = tk.StringVar(root)
+combo_sheets = None
 
 # File Selection
 frame_file = tk.Frame(root)
